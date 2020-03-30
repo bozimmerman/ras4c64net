@@ -61,8 +61,8 @@ RASPKiSS:	cbi	$c00f,#$40	; check for wheels
 
 
 ;*****************************
-;* RASPmdm1 initialize CIA for bit
-;* transmission. Also sets baud to 1200
+;* RASPmdm1 initialize CIA for modem
+;* transmission. Also sets baud again
 ;*****************************
 RASPmdm1:	lda	RASPbaud
 	jsr	RASPsetb
@@ -79,7 +79,7 @@ RASPmdm1:	lda	RASPbaud
 
 
 ;*****************************
-;* RASPsetb: set the baud rate
+;* RASPsetb: set the baud rate in .a
 ;* 0=1200 baud, 1=4800 baud
 ;*****************************
 RASPsetb:	asl	a
@@ -114,6 +114,7 @@ CLL2PBVals:	.byte $34,$03	; 1200 baud
 ;*****************************
 ;* RASPnmi: the main bit pusher routine
 ;* It sends data a bit at a time
+;* It requires $dd0d in .a
 ;*****************************
 RASPnmi:	and	#$01	; did timer A go off?
 	beq	90$	; no, so do nothing
@@ -179,8 +180,6 @@ RASPsnd:	php		; preserve .a and status
 
 ;*****************************
 ;* IsNTSC	Is the computer NTSC?
-;* Outputs:
-;*	duh
 ;******************************
 IsNTSC:	lda #$00
 	beq 10$
@@ -219,8 +218,7 @@ IsNTSC:	lda #$00
 ;*****************************
 ;* PRDinit
 ;* Initializes the printer driver by setting
-;* the C64/C128 banking vars, 
-;* and initializing the modem 
+;* the C64/C128 banking vars 
 ;******************************
 PRDinit:	; initforprint 7900
 	jsr	Check128
@@ -310,7 +308,7 @@ PRDpbuf:	; printbuffer 7906 -- line starting at R0
 	bne	10$	; check inited flag
 	jsr	RASPstrt	; no, so go initialize
 10$:	mvw	A0,RASPsava	; save A0 for later
-	mvw	R0,A0	; set the col ptr
+15$:	mvw	R0,A0	; set the col ptr
 	adw	RASPctr,A0	; add the row offset
 20$:	ldy	#0
 	lda	(A0),y	; invert each byte
@@ -321,7 +319,7 @@ PRDpbuf:	; printbuffer 7906 -- line starting at R0
 	blt	20$
 	inc	RASPctr	; then bump row offset
 	cbi	RASPctr,#8
-	blt	10$	; and do next row
+	blt	15$	; and do next row
 	mvw	RASPsava,A0	; restore A0
 	jsr	RASPKiSS	; kill the screen saver
 	inc	RASProw	; bump page row counter
@@ -349,6 +347,12 @@ PRDstop:	; stopprint 7909
 10$:	ldx	#0
 	rts
 
+
+
+;*****************************
+;* RASPpaus
+;* Pauses between .x-1 and .x secs 
+;*****************************
 RASPpaus:	lda	R0L	; save R0L for later
 	pha
 	jsr	lda_ipio
@@ -419,10 +423,14 @@ PRDsascii:	; startascii 7912
 RASPastrt:	ldy	#0
 .if RASPbdup = 1
 10$:	lda	RASPmsg4,y	; send at command
-	beq	40$
+	beq	20$
 	jsr	RASPsnd
 	iny
 	bne	10$
+20$:	ldx	#3	; wait 3 secs for conn
+	jsr	RASPpaus
+	ldb	RASPbaud,#1	; then switch to 4800
+	jsr	RASPmdm1
 .else
 10$:	lda	RASPmsg5,y	; send at command
 	beq	40$
@@ -430,11 +438,7 @@ RASPastrt:	ldy	#0
 	iny
 	bne	10$
 .endif
-40$:	ldx	#2
-	jsr	RASPpaus
-	ldb	RASPbaud,#1	; switch to 4800
-	jsr	RASPmdm1
-	inc	RASPinifg	; now set the inited flag
+40$:	inc	RASPinifg	; now set the inited flag
 	ldx	#0
 	rts
 
