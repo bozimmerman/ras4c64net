@@ -1,0 +1,31 @@
+ras4c64net printer driver
+(c) 2020 Bo Zimmerman
+
+Requirements:
+This driver works in the C64 and C128 versions of GEOS, Wheels, MP3, and gateWay.
+
+The driver also requires a C64Net WiFi modem from http://electronicsisfun.com or a suitable facsimile running Zimodem firmware version 3.5.4 or better.  Use AT&U to make sure you are running the latest version of the firmware.
+ 
+Lastly, the driver requires a CUPs server that permits remote IPP connections, or a printer which supports both IPP and Sun Raster (ras) image printing.  You will need your IPP host, port, and url below. The url might look something like 192.168.1.50:631/printers/hp_laserjet
+
+Modem Setup:
+You will need a terminal program to prepare your modem to use the driver.
+
+The first step is to make sure your modem is set to 1200 baud.  Use ATB1200 to ensure this.
+
+Next you will tell the modem your printers host, port, and url and also print a test page. To do this, enter the following command, substituting your CUPs/IPP printer url where appropriate:
+AT+PRINTP:host:port/my-printer/url
+Now just enter some text and wait a few seconds and a test page should be printed.
+If a page does not appear, or you see ERROR instead of OK after 5 seconds of waiting, then you should check your CUPs or printer settings.
+
+Once your print test is successful, save your printer settings to the modem with AT&W.
+
+Using the Driver:
+The driver has been tested with geoWrite and geoPaint (monochrome only), but should work fine in all standard GEOS applications that use your normal printer driver.
+
+The driver works by sending ATR0Q1E0 and then AT+PRINTR which is why you must save your printer url to the modem before using the driver.  
+
+It then converts the GEOS image into a 640 x 720 Sun Raster (RAS) file and transmits the data to the modem.  The modem then converts the image file to an IPP request and transmits to the CUPs server (or IPP printer). This process starts at 1200 baud, but peaks out at 4800 baud -- faster a normal IEC printer.
+
+Contact me at bo@zimmers.net with any questions.
+

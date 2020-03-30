@@ -1,0 +1,453 @@
+<!DOCTYPE html><html><head><title>Untitled</title></head><body><pre>
+;*****************************
+;* S/ras4c64net
+;* (c) 2020 Bo Zimmerman
+;*
+;* Basically a serial-port printer data 
+;* converter for C64Net WiFi AT+PRINT
+;* command.  The actual IPP/CUPS 
+;* protocol is handled by the modem.
+;* The image format is .RAS
+;*****************************
+.if Pass1
+.include GEOSequates
+	RASPbdcd = 0	; 0=1200, 1=4800
+	RASPbdup = 1	; upgrade baud
+.endif
+
+.psect
+
+	jmp	PRDinit	; initforprint 7900
+	jmp	PRDstart	; startprint 7903
+	jmp	PRDpbuf	; printbuffer 7906
+	jmp	PRDstop	; stopprint 7909
+	jmp	PRDdims	; getdimensions 790c
+	jmp	PRDpascii	; printascii 790f
+	jmp	PRDsascii	; startascii 7912
+	jmp	PRDsetnlq	; setnlq 7915
+
+
+;*****************************
+;* misc utility routines:
+;* lda_ipio, go_ipio, sta_ipio: banking
+;* Check128 : am running in C128
+;* RASPKiSS : kill the Wheels screen saver
+;*****************************
+
+lda_ipio:	lda	$ff00	; load the bank register
+	rts
+
+go_ipio:	lda	#$7e	; turn on io
+sta_ipio:	sta	$ff00	; store in bank register
+	rts
+
+Check128:	lda	#$12	; running in c128?
+	cmp	$c00f
+	bpl	10$
+	lda	$c013
+10$:	cmp	#$80
+	rts
+
+RASPKiSS:	cbi	$c00f,#$40	; check for wheels
+	blt	10$
+	cbi	$904f,#$50	; still checking
+	blt	10$
+	ldb	$88b4,#96	; disable screen saver
+	ldb	$88b5,#$4f	; bump the delay
+	lda	#0
+	rts
+10$:	lda	#$ff
+	rts
+
+
+;*****************************
+;* RASPmdm1 initialize CIA for bit
+;* transmission. Also sets baud to 1200
+;*****************************
+RASPmdm1:	lda	RASPbaud
+	jsr	RASPsetb
+	ldb	$dd0d,#$7f
+	ldb	$dd0d,#$90		
+	ldb	CLL2Busy,#$00
+	lda	$dd03
+	and	#$ae
+	ora	#$02
+	sta	$dd03
+	sta	$dd01
+	rts
+
+
+
+;*****************************
+;* RASPsetb: set the baud rate
+;* 0=1200 baud, 1=4800 baud
+;*****************************
+RASPsetb:	asl	a
+	tay
+	mvw	A0,RASPsava
+	ldw	A0,#CLL2NBVals
+	jsr	IsNTSC	; ntsc flag, 0=ntsc
+	beq	10$
+	ldw	A0,#CLL2PBVals
+10$:	jsr	lda_ipio
+	pha
+	jsr	go_ipio
+	ldx	#0
+20$:	lda	(A0),y
+	sta	$dd04,x
+	iny	
+	inx
+	cpx	#$04
+	bne	20$
+	mvw	RASPsava,A0
+	pla
+	jmp	sta_ipio
+
+RASPsava:	.byte 0,0
+CLL2NBVals:	.byte $54,$03	; 1200 baud
+	.byte $cf,$00	; 4800
+
+CLL2PBVals:	.byte $34,$03	; 1200 baud
+	.byte $c7,$00	; 4800
+
+
+;*****************************
+;* RASPnmi: the main bit pusher routine
+;* It sends data a bit at a time
+;*****************************
+RASPnmi:	and	#$01	; did timer A go off?
+	beq	90$	; no, so do nothing
+	dec	CLL2WBit	; timer A went off, so..
+	bmi	30$
+	beq	20$
+	lda	CLL2NxtO	; write next bit
+	sta	$dd00
+	lda	CLL2Space
+	lsr	CLL2WTmp	; check NEXT bit in C
+	bcs	10$	; is high, so store space
+	lda	CLL2Mark	; is low, so store mark
+10$:	sta	CLL2NxtO	; now stored
+	bra	90$
+20$:	lda	CLL2Space	; final bit condition
+	sta	$dd00	; return to base state
+	bra	90$
+30$:	lda	#$10	; signal to reload Timer A
+	sta	$dd0e
+	ldb	$dd0d,#$7f
+	lda	#$01	; set new timer A nmi
+	sta	CLL2Busy	; uhh.. this is weird
+90$:	rts
+CLL2NxtO:	.byte	$c1
+CLL2Mark:	.byte	$c1
+CLL2Space:	.byte	$c5
+CLL2Busy:	.byte	0
+CLL2WTmp:	.byte 0
+CLL2WBit:	.byte	0
+
+
+;*****************************
+;* RASPsnd : send a byte to the modem
+;*****************************
+RASPsnd:	php		; preserve .a and status
+	pha
+10$:	lda	CLL2Busy	; already sending?
+	bmi	10$	; if so, WAIT
+	sei		; prevent interrupts
+	pla		; 
+	sta	CLL2WTmp	; temp store our byte
+	jsr	lda_ipio
+	pha		; turn on IO mode
+	jsr	go_ipio
+	ldb	$dd0d,#$81	; init cia to send next byte
+	ldb	$dd0e,#$11	; reload time, start timer a
+	ldb	CLL2WBit,#$09	; bits to write
+	ldb	CLL2Busy,#$80	; set the BUSY flag
+	mvb	CLL2Mark,$dd00	; *SEND THE MARK
+	lsr	CLL2WTmp	; shift off first real bit
+	bcc	20$
+	lda	CLL2Space
+20$:	sta	CLL2NxtO	; store the bit in NxtO
+30$:	lda	$dd0d
+	beq	30$
+	jsr	RASPnmi
+	lda	CLL2Busy
+	bmi	30$
+	pla
+	jsr	sta_ipio	; restore kernel
+	plp
+	rts
+
+;*****************************
+;* IsNTSC	Is the computer NTSC?
+;* Outputs:
+;*	duh
+;******************************
+IsNTSC:	lda #$00
+	beq 10$
+	cmp #$01
+	rts
+10$:	sei
+	jsr	lda_ipio
+	pha
+	jsr	go_ipio
+	lda $d011
+	pha
+20$:	lda $d012
+	bne 20$
+	ldb $d012,#$37
+	ldb $d011,#$9b
+	ldb $d019,#$01
+30$:	lda $d011
+	bpl 30$
+40$:	lda $d011
+	bmi 40$
+	lda $d019
+	and #$01
+	sta $d019
+	inc IsNTSC+1	; is NTSC
+	cmp #$00
+	beq 50$
+	inc IsNTSC+1	; is PAL
+50$:	pla
+	sta $d011
+	pla
+	jsr	sta_ipio
+	cli
+	jmp IsNTSC
+
+
+;*****************************
+;* PRDinit
+;* Initializes the printer driver by setting
+;* the C64/C128 banking vars, 
+;* and initializing the modem 
+;******************************
+PRDinit:	; initforprint 7900
+	jsr	Check128
+	beq	10$
+	ldw	lda_ipio+1,#$0001
+	ldw	sta_ipio+1,#$0001
+	ldb	go_ipio+1,#$35
+10$:	ldx	#0
+	rts
+
+RASPbaud:	.byte	0	; the baud rate code
+
+;*****************************
+;* PRDstart
+;* Start an image print by doing nothing
+;* but clearing the initialized flag
+;* Actual start happens when first line
+;* is sent
+;******************************
+PRDstart:	; startprint 7903
+	ldb	RASPinifg,#0	; just clear the inited flag
+	tax
+	rts
+
+
+
+;*****************************
+;* Start actual image print init by
+;* sending the AT+PRINTR and RAS header
+;* Then set the initialized flag
+;*****************************
+RASPstrt:	ldy	#0	; do image init
+	sty	RASProw
+.if RASPbdup = 1
+10$:	lda	RASPmsgu,y	; send at commands
+	beq	20$
+	jsr	RASPsnd
+	iny
+	bne	10$
+20$:	ldx	#3
+	jsr	RASPpaus
+	ldb	RASPbaud,#1	; switch to 4800
+	jsr	RASPmdm1
+.else
+10$:	lda	RASPmsg1,y	; send at commands
+	beq  30$
+	jsr	RASPsnd
+	iny
+	bne	10$
+.endif
+30$:	ldy	#0
+40$:	lda	RASPmsg2,y
+	jsr	RASPsnd
+	iny
+	cpy	#32	; magic size
+	blt	40$
+	inc	RASPinifg	; SET the inited flag! done
+	rts
+
+RASProw:	.byte	$00
+RASPinifg:	.byte	$00
+
+RASPmsg1:	.byte	13,10,13,10,"ate0r0q1",13,10,"at+printr",13,0
+RASPmsgu:	.byte	13,10,13,10,"ate0r0q1s43=4800",13,10,"at+printr",13,0
+RASPmsg2:	.byte	$59,$a6,$6a,$95
+	.byte	$00,$00,$02,$80
+	.byte	$00,$00,$02,$d0
+	.byte	$00,$00,$00,$01
+	.byte	$00,$00,$E1,$00
+	.byte	$00,$00,$00,$01
+	.byte	$00,$00,$00,$00
+	.byte	$00,$00,$00,$00
+RASPmsg3:	.byte	$00
+
+
+;*****************************
+;* PRDpbuf
+;* print a single 8 x 640 bit line
+;*****************************
+PRDpbuf:	; printbuffer 7906 -- line starting at R0
+	jsr	RASPKiSS	; kill the screen saver
+	jsr	RASPmdm1	; re init modem
+	ldw	RASPctr,#0	; clr row counter
+	mvw	R0,RASPeol	
+	avw	#$280,RASPeol	; set end of data ptr
+	lda	RASPinifg
+	bne	10$	; check inited flag
+	jsr	RASPstrt	; no, so go initialize
+10$:	mvw	A0,RASPsava	; save A0 for later
+	mvw	R0,A0	; set the col ptr
+	adw	RASPctr,A0	; add the row offset
+20$:	ldy	#0
+	lda	(A0),y	; invert each byte
+	eor	#$ff
+	jsr	RASPsnd	; and send to modem
+	avw	#8,A0
+	cpw	A0,RASPeol	; go until end of row
+	blt	20$
+	inc	RASPctr	; then bump row offset
+	cbi	RASPctr,#8
+	blt	10$	; and do next row
+	mvw	RASPsava,A0	; restore A0
+	jsr	RASPKiSS	; kill the screen saver
+	inc	RASProw	; bump page row counter
+	ldx	#0
+	rts
+RASPctr:	.byte	0,0
+RASPeol:	.byte	0,0
+
+;*****************************
+;* PRDstop
+;* Send end-of-page by pausing 7 secs
+;*****************************
+PRDstop:	; stopprint 7909
+	jsr	RASPKiSS	; kill the screen saver
+	ldb	RASPinifg,#0	; reset print buffer flag
+.if RASPbdup = 1
+	ldb	RASPbaud,#0	; switch back to 1200
+	jsr	RASPmdm1
+.endif
+	ldx	#7	; will count 7 secs
+	jsr	RASPpaus
+	jsr	RASPKiSS	; kill it again!
+	bne	10$
+	ldb	$88b4,#0	; re-enable screen saver
+10$:	ldx	#0
+	rts
+
+RASPpaus:	lda	R0L	; save R0L for later
+	pha
+	jsr	lda_ipio
+	pha
+	jsr	go_ipio
+	lda	$dc08
+	lda	$dc09
+	sta	R0L
+10$:	lda	$dc08
+	lda	$dc09	; start 1 sec pause
+	cmp	R0L	; 
+	beq	10$
+	sta	R0L	; 1 second done
+	dex		; all secs done yet?
+	bne	10$	; nope, keep looking
+	pla
+	jsr	sta_ipio
+	pla
+	sta	R0L	; restore the broken R0L
+	rts
+
+
+;*****************************
+;* PRDdims
+;* return dimensinos 80x90
+;*****************************
+PRDdims:	; getdimensions 790c
+	lda	#0
+	ldx	#80
+	ldy	#90
+	rts
+
+
+;*****************************
+;* PRDpascii
+;* print a single 80 col line of text
+;*****************************
+PRDpascii:	; printascii 790f - R0 with ascii to send
+	jsr	RASPKiSS	; kill the screen saver
+	jsr	RASPmdm1	; re init cia/modem
+	lda	RASPinifg
+	bne	10$	; check inited flag
+	jsr	RASPastrt	; clr, so go initialize
+10$:	ldy	#0
+15$:	lda	(R0),y	; send each byte
+	beq	20$
+	jsr	RASPsnd
+	iny
+	bne	15$	; until 0 encountered
+20$:	ldx	#0
+	rts
+
+;*****************************
+;* PRDascii
+;* start an ascii print by simply 
+;* clearing the init flag
+;*****************************
+PRDsascii:	; startascii 7912
+	ldb	RASPinifg,#0
+	rts
+
+
+
+;*****************************
+;* Initialize an ascii print page by 
+;* sending AT+PRINTA and nothing else
+;*****************************
+RASPastrt:	ldy	#0
+.if RASPbdup = 1
+10$:	lda	RASPmsg4,y	; send at command
+	beq	40$
+	jsr	RASPsnd
+	iny
+	bne	10$
+.else
+10$:	lda	RASPmsg5,y	; send at command
+	beq	40$
+	jsr	RASPsnd
+	iny
+	bne	10$
+.endif
+40$:	ldx	#2
+	jsr	RASPpaus
+	ldb	RASPbaud,#1	; switch to 4800
+	jsr	RASPmdm1
+	inc	RASPinifg	; now set the inited flag
+	ldx	#0
+	rts
+
+RASPmsg4:	.byte	13,10,13,10,"ate0r0q1s43=4800",13,10,"at+printa",13,0
+RASPmsg5:	.byte	13,10,13,10,"ate0r0q1",13,10,"at+printa",13,0
+
+;*****************************
+;* PRDsetnlq
+;* do nothing
+;*****************************
+PRDsetnlq:	; setnlq 7915
+	rts
+
+
+
+</pre></body></html>
