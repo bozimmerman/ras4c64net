@@ -27,5 +27,5 @@ The driver works by sending ATR0Q1E0 and then AT+PRINTR which is why you must sa
 
 It then converts the GEOS image into a 640 x 720 Sun Raster (RAS) file and transmits the data to the modem.  The modem then converts the image file to an IPP request and transmits to the CUPs server (or IPP printer). This process starts at 1200 baud, but peaks out at 4800 baud -- faster than a normal IEC printer!
 
-Contact me at bo@zimmers.net with any questions.
+Contact me with any questions.
 
