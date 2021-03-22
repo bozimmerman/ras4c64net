@@ -15,8 +15,8 @@ The first step is to make sure your modem is set to 1200 baud.  Use ATB1200 to e
 
 Next you will tell the modem your printers host, port, and url and also print a test page. To do this, enter the following command, substituting your CUPs/IPP printer url where appropriate:
 AT+PRINTP:host:port/my-printer/url
-Now just enter some text and wait a few seconds and a test page should be printed.
-If a page does not appear, or you see ERROR instead of OK after 5 seconds of waiting, then you should check your CUPs or printer settings.
+Now just enter some text and wait a few seconds, enter +++, and wait a few seconds, and a test page should be printed.
+If a page does not appear, or you see ERROR instead of OK after a waiting, then you should check your CUPs or printer settings.
 
 Once your print test is successful, save your printer settings to the modem with AT&W.
 
